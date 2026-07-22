@@ -1870,6 +1870,7 @@ unsigned PECallFunction::test_width_method_(Design*, NetScope*,
 
       // Chained class methods: obj.m1().m2() — width is that of the last call.
       // Also: c.cg.get_inst_coverage() where cg is an embedded covergroup.
+      // Also: obj.a.b.method() property chains.
       if (search_results.path_tail.size() > 1) {
 	    if (search_results.path_tail.size() == 2 && search_results.net) {
 		  const netclass_t*cls = dynamic_cast<const netclass_t*>(search_results.type);
@@ -1888,17 +1889,42 @@ unsigned PECallFunction::test_width_method_(Design*, NetScope*,
 				    signed_flag_ = true;
 				    return 1;
 			      }
-			      if (prop_cls && ! prop_cls->is_covergroup()) {
-				    NetScope*meth = prop_cls->method_from_name(search_results.path_tail.back().name);
-				    if (meth) {
-					  const NetNet*res = meth->find_signal(meth->basename());
-					  if (res) {
-						expr_type_   = res->data_type();
-						expr_width_  = res->vector_width();
-						min_width_   = expr_width_;
-						signed_flag_ = res->get_signed();
-						return expr_width_;
-					  }
+			}
+		  }
+	    }
+	    if (search_results.net) {
+		  const netclass_t* cur_class = dynamic_cast<const netclass_t*>(search_results.type);
+		  if (!cur_class && search_results.net->net_type())
+			cur_class = dynamic_cast<const netclass_t*>(search_results.net->net_type());
+		  if (cur_class) {
+			size_t ntail = search_results.path_tail.size();
+			size_t idx = 0;
+			bool props_ok = true;
+			for (auto it = search_results.path_tail.begin()
+				   ; idx + 1 < ntail ; ++it, ++idx) {
+			      int pidx = cur_class->property_idx_from_name(it->name);
+			      if (pidx < 0) {
+				    props_ok = false;
+				    break;
+			      }
+			      const netclass_t* pcls = dynamic_cast<const netclass_t*>(cur_class->get_prop_type(pidx));
+			      if (!pcls || pcls->is_covergroup()) {
+				    props_ok = false;
+				    break;
+			      }
+			      cur_class = pcls;
+			}
+			if (props_ok) {
+			      perm_string mname = search_results.path_tail.back().name;
+			      NetScope*meth = cur_class->method_from_name(mname);
+			      if (meth) {
+				    const NetNet*res = meth->find_signal(meth->basename());
+				    if (res) {
+					  expr_type_   = res->data_type();
+					  expr_width_  = res->vector_width();
+					  min_width_   = expr_width_;
+					  signed_flag_ = res->get_signed();
+					  return expr_width_;
 				    }
 			      }
 			}
@@ -3314,7 +3340,7 @@ NetExpr* PEIdent::elaborate_expr_class_field_(Design*des, NetScope*scope,
 		 << " look for property " << comp << endl;
       }
 
-	/* Nested path: property is a virtual interface, then member. */
+	/* Nested path: class-handle property chain, or vif.member. */
       if (sr.path_tail.size() > 1) {
 	    int pidx = class_type->property_idx_from_name(comp.name);
 	    if (pidx < 0) {
@@ -3326,27 +3352,63 @@ NetExpr* PEIdent::elaborate_expr_class_field_(Design*des, NetScope*scope,
 	    }
 	    ivl_type_t ptype = class_type->get_prop_type(pidx);
 	    const netvif_t*vif_type = dynamic_cast<const netvif_t*>(ptype);
-	    if (!vif_type || sr.path_tail.size() != 2) {
-		  cerr << get_fileline() << ": sorry: "
-		       << "Nested member path not yet supported for class properties."
-		       << endl;
-		  des->errors += 1;
-		  return nullptr;
+	    if (vif_type && sr.path_tail.size() == 2) {
+		  pform_name_t::const_iterator it = sr.path_tail.begin();
+		  ++it;
+		  const name_component_t&mcomp = *it;
+		  int midx = vif_type->member_idx_from_name(mcomp.name);
+		  if (midx < 0) {
+			cerr << get_fileline() << ": error: "
+			     << "Virtual interface has no member `"
+			     << mcomp.name << "'." << endl;
+			des->errors += 1;
+			return 0;
+		  }
+		  NetEProperty*prop = new NetEProperty(sr.net, pidx, nullptr);
+		  prop->set_line(*this);
+		  return elab_vif_member_get(*this, prop, vif_type, midx);
 	    }
-	    pform_name_t::const_iterator it = sr.path_tail.begin();
-	    ++it;
-	    const name_component_t&mcomp = *it;
-	    int midx = vif_type->member_idx_from_name(mcomp.name);
-	    if (midx < 0) {
-		  cerr << get_fileline() << ": error: "
-		       << "Virtual interface has no member `"
-		       << mcomp.name << "'." << endl;
-		  des->errors += 1;
-		  return 0;
+
+	    /* Class-handle chain: obj.a.b.c */
+	    const netclass_t* cur = class_type;
+	    NetExpr* expr = 0;
+	    for (pform_name_t::const_iterator it = sr.path_tail.begin()
+		       ; it != sr.path_tail.end() ; ++it) {
+		  int ipidx = cur->property_idx_from_name(it->name);
+		  if (ipidx < 0) {
+			cerr << get_fileline() << ": error: "
+			     << "Class " << cur->get_name()
+			     << " has no property " << it->name << "." << endl;
+			des->errors += 1;
+			delete expr;
+			return 0;
+		  }
+		  if (expr == 0)
+			expr = new NetEProperty(sr.net, (size_t)ipidx, nullptr);
+		  else
+			expr = new NetEProperty(expr, (size_t)ipidx, nullptr);
+		  expr->set_line(*this);
+		  ivl_type_t iptype = cur->get_prop_type(ipidx);
+		  const netclass_t* next = dynamic_cast<const netclass_t*>(iptype);
+		  if (next == 0 || next->is_covergroup()) {
+			/* Last component may be a non-class property; allow
+			   only when this is the final path element. */
+			pform_name_t::const_iterator nxt = it;
+			++nxt;
+			if (nxt != sr.path_tail.end()) {
+			      cerr << get_fileline() << ": sorry: "
+				   << "Nested member path not yet supported for "
+				   << "non-class property `" << it->name << "'."
+				   << endl;
+			      des->errors += 1;
+			      delete expr;
+			      return nullptr;
+			}
+			return expr;
+		  }
+		  cur = next;
 	    }
-	    NetEProperty*prop = new NetEProperty(sr.net, pidx, nullptr);
-	    prop->set_line(*this);
-	    return elab_vif_member_get(*this, prop, vif_type, midx);
+	    return expr;
       }
 
       ivl_type_t par_type;
@@ -4235,15 +4297,52 @@ NetExpr* PECallFunction::elaborate_expr_method_(Design*des, NetScope*scope,
 			      }
 			}
 
-			/* Class-handle property: obj.prop.method(...) as a function. */
-			if (cg_type && ! cg_type->is_covergroup()) {
-			      NetEProperty*prop = new NetEProperty(search_results.net, pidx, nullptr);
-			      prop->set_line(*this);
-			      perm_string method_name = search_results.path_tail.back().name;
-			      return elaborate_class_method_net_this_(des, scope, prop, cg_type,
-								      method_name, &parms_);
-			}
+			/* Class-handle property function calls with a chain are
+			   handled below (any depth). Keep covergroup/queue above. */
 		  }
+	    }
+      }
+
+	/* obj.a.b.method(...) as a function: path_tail is {a, b, method}. */
+      if (search_results.path_tail.size() >= 2 && search_results.net) {
+	    const netclass_t*cls = dynamic_cast<const netclass_t*>(search_results.type);
+	    if (!cls && search_results.net->net_type())
+		  cls = dynamic_cast<const netclass_t*>(search_results.net->net_type());
+	    if (cls) {
+		  const netclass_t* cur = cls;
+		  NetExpr* use_this = 0;
+		  bool ok = true;
+		  size_t nprop = search_results.path_tail.size() - 1;
+		  size_t step = 0;
+		  for (pform_name_t::const_iterator it = search_results.path_tail.begin()
+			     ; step < nprop ; ++it, ++step) {
+			int pidx = cur->property_idx_from_name(it->name);
+			if (pidx < 0) {
+			      ok = false;
+			      break;
+			}
+			ivl_type_t ptype = cur->get_prop_type(pidx);
+			const netclass_t* pcls = dynamic_cast<const netclass_t*>(ptype);
+			if (!pcls || pcls->is_covergroup()) {
+			      ok = false;
+			      break;
+			}
+			if (use_this == 0)
+			      use_this = new NetEProperty(search_results.net, (size_t)pidx, 0);
+			else
+			      use_this = new NetEProperty(use_this, (size_t)pidx, 0);
+			use_this->set_line(*this);
+			cur = pcls;
+		  }
+		  if (ok && use_this) {
+			perm_string method_name = search_results.path_tail.back().name;
+			NetExpr*res = elaborate_class_method_net_this_(des, scope, use_this, cur,
+								      method_name, &parms_);
+			if (res == 0)
+			      delete use_this;
+			return res;
+		  }
+		  delete use_this;
 	    }
       }
 

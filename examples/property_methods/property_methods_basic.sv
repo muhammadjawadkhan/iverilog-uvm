@@ -1,7 +1,7 @@
-// Compiler: class-handle property method calls (obj.prop.method).
+// Compiler: class-handle property method calls (obj.prop.method and chains).
 `timescale 1ns/1ps
 
-class inner;
+class leaf;
   int x;
   function void setx(int v);
     x = v;
@@ -11,9 +11,18 @@ class inner;
   endfunction
 endclass
 
-class outer;
-  inner ap;
+class mid;
+  leaf ap;
   function new();
+    ap = new;
+  endfunction
+endclass
+
+class outer;
+  mid m;
+  leaf ap;
+  function new();
+    m = new;
     ap = new;
   endfunction
 endclass
@@ -29,7 +38,13 @@ module property_methods_basic;
     o.ap.setx(9);
     n = o.ap.getx();
     if (n !== 9) begin
-      $display("FAIL: got %0d", n);
+      $display("FAIL one-level: got %0d", n);
+      pass = 0;
+    end
+    o.m.ap.setx(11);
+    n = o.m.ap.getx();
+    if (n !== 11) begin
+      $display("FAIL chain: got %0d", n);
       pass = 0;
     end
     if (pass)

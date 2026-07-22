@@ -93,4 +93,54 @@ class uvm_driver extends uvm_component;
   endtask
 endclass : uvm_driver
 
+// Accellera-shaped monitor: observation component with an analysis port.
+class uvm_monitor extends uvm_component;
+  uvm_analysis_port ap;
+
+  function new(string name = "uvm_monitor", uvm_component parent = null);
+    super.new(name, parent);
+    ap = new("ap");
+  endfunction
+
+  // Override: sample DUT / produce an item and write to ap.
+  virtual task sample_and_write(uvm_sequence_item item);
+    ap.write(item);
+  endtask
+endclass : uvm_monitor
+
+// Thin active agent: sequencer + driver + monitor under one component.
+class uvm_agent extends uvm_component;
+  bit is_active;
+  uvm_sequencer sequencer;
+  uvm_driver    driver;
+  uvm_monitor   monitor;
+
+  function new(string name = "uvm_agent", uvm_component parent = null);
+    super.new(name, parent);
+    is_active = 1;
+  endfunction
+
+  // Note: do not call super.build_phase / super.connect_phase — virtual
+  // dispatch through the same handle recurses (no non-virt super yet).
+  virtual function void build_phase(uvm_phase phase);
+    monitor = new("monitor", this);
+    if (is_active) begin
+      sequencer = new("sequencer", this);
+      driver = new("driver", this);
+    end
+  endfunction
+
+  virtual function void connect_phase(uvm_phase phase);
+    if (is_active && driver != null && sequencer != null)
+      driver.set_sequencer(sequencer);
+  endfunction
+endclass : uvm_agent
+
+// Thin env: holds one agent (extend for multi-agent TBs).
+class uvm_env extends uvm_component;
+  function new(string name = "uvm_env", uvm_component parent = null);
+    super.new(name, parent);
+  endfunction
+endclass : uvm_env
+
 `endif // IVL_UVM_SEQ_SVH

@@ -4502,32 +4502,64 @@ NetProc* PCallTask::elaborate_method_(Design*des, NetScope*scope,
 			      }
 			}
 
-			/* Class-handle property: obj.prop.method(...) where
-			   prop's type is a class. Resolve method on that type
-			   and pass NetEProperty as `this`. */
-			if (cg_type && ! cg_type->is_covergroup()) {
-			      NetScope*task = cg_type->method_from_name(method_name);
-			      if (task == 0) {
-				    if (! add_this_flag) {
-					  cerr << get_fileline() << ": error: "
-					       << "Can't find task " << method_name
-					       << " in class " << cg_type->get_name()
-					       << endl;
-					  des->errors += 1;
-				    }
-				    return 0;
-			      }
-			      if (debug_elaborate) {
-				    cerr << get_fileline() << ": PCallTask::elaborate_method_: "
-					 << "Elaborate " << cg_type->get_name()
-					 << " method " << task->basename()
-					 << " via property " << prop_name << endl;
-			      }
-			      NetEProperty*use_this = new NetEProperty(net, (size_t)pidx, 0);
-			      use_this->set_line(*this);
-			      return elaborate_build_call_(des, scope, task, use_this);
-			}
+			/* Class-handle property method calls are handled below
+			   for any path_tail length (obj.a.b.method). */
 		  }
+	    }
+      }
+
+	/* Class-handle property chain: obj.a.b.method(...) — path_tail is
+	   the property path; method_name is the method on the final type. */
+      if (! sr.path_tail.empty()) {
+	    const netclass_t*cls = dynamic_cast<const netclass_t*>(sr.type);
+	    if (!cls && net->net_type())
+		  cls = dynamic_cast<const netclass_t*>(net->net_type());
+	    if (cls) {
+		  const netclass_t* cur = cls;
+		  NetExpr* use_this = 0;
+		  bool ok = true;
+		  for (pform_name_t::const_iterator it = sr.path_tail.begin()
+			     ; it != sr.path_tail.end() ; ++it) {
+			int pidx = cur->property_idx_from_name(it->name);
+			if (pidx < 0) {
+			      ok = false;
+			      break;
+			}
+			ivl_type_t ptype = cur->get_prop_type(pidx);
+			const netclass_t* pcls = dynamic_cast<const netclass_t*>(ptype);
+			if (!pcls || pcls->is_covergroup()) {
+			      ok = false;
+			      break;
+			}
+			if (use_this == 0)
+			      use_this = new NetEProperty(net, (size_t)pidx, 0);
+			else
+			      use_this = new NetEProperty(use_this, (size_t)pidx, 0);
+			use_this->set_line(*this);
+			cur = pcls;
+		  }
+		  if (ok && use_this) {
+			NetScope*task = cur->method_from_name(method_name);
+			if (task == 0) {
+			      delete use_this;
+			      if (! add_this_flag) {
+				    cerr << get_fileline() << ": error: "
+					 << "Can't find task " << method_name
+					 << " in class " << cur->get_name()
+					 << endl;
+				    des->errors += 1;
+			      }
+			      return 0;
+			}
+			if (debug_elaborate) {
+			      cerr << get_fileline() << ": PCallTask::elaborate_method_: "
+				   << "Elaborate " << cur->get_name()
+				   << " method " << task->basename()
+				   << " via property chain " << sr.path_tail << endl;
+			}
+			return elaborate_build_call_(des, scope, task, use_this);
+		  }
+		  delete use_this;
 	    }
       }
 

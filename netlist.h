@@ -4721,10 +4721,14 @@ class NetENull : public NetExpr {
  */
 class NetEProperty : public NetExpr {
     public:
+	// Property of a class-typed net (obj.prop).
       NetEProperty(NetNet*n, size_t pidx_, NetExpr*canon_index =0);
+	// Property of a class-typed expression (obj.a.b — nested base).
+      NetEProperty(NetExpr*base, size_t pidx_, NetExpr*canon_index =0);
       ~NetEProperty() override;
 
       inline const NetNet* get_sig() const { return net_; }
+      inline const NetExpr* get_base() const { return base_; }
       inline size_t property_idx() const { return pidx_; }
       inline const NetExpr*get_index() const { return index_; }
 
@@ -4738,6 +4742,7 @@ class NetEProperty : public NetExpr {
 
     private:
       NetNet*net_;
+      NetExpr*base_;
       size_t pidx_;
       NetExpr*index_;
 };

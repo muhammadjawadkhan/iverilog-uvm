@@ -31,7 +31,7 @@ drv.run_phase(ph); // get_next_item → drive_item → item_done
 
 - No parameterized `uvm_driver#(REQ)` / analysis `#(T)`
 - One analysis subscriber only (no fan-out list)
-- No full agent/monitor/env hierarchy
+- Agent/monitor/env: **partial** (see [agent.md](agent.md))
 
 ## Example
 

@@ -341,6 +341,7 @@ struct ivl_expr_s {
 		  ivl_signal_t sig;
 		  unsigned prop_idx;
 		  ivl_expr_t index;
+		  ivl_expr_t base; /* nested class expr, else 0 */
 	    } property_;
       } u_;
 };
