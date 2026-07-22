@@ -35,14 +35,14 @@ module factory_basic;
   initial begin
     pass = 1;
 
-    // Accellera-shaped singleton registration via type_id::get().
-    ok = $cast(w_pkt, pkt::type_id::get());
-    if (!ok || w_pkt == null) begin
+    // Accellera-shaped singleton registration via typed type_id::get().
+    w_pkt = pkt::type_id::get();
+    if (w_pkt == null) begin
       $display("FAIL: pkt::type_id::get");
       pass = 0;
     end
-    ok = $cast(w_ext, pkt_ext::type_id::get());
-    if (!ok || w_ext == null) begin
+    w_ext = pkt_ext::type_id::get();
+    if (w_ext == null) begin
       $display("FAIL: pkt_ext::type_id::get");
       pass = 0;
     end

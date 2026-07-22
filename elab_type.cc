@@ -130,6 +130,79 @@ static vector<perm_string> class_param_names_in_order_(
       return names;
 }
 
+/*
+ * True when #() overrides are exactly the class's own parameter names
+ * (prefix allowed): typedef R#(T) / R#(T,Tname) this_type inside R.
+ */
+static bool override_names_own_param_(PExpr*ex, perm_string want)
+{
+      if (ex == 0)
+	    return false;
+
+      if (const PEIdent*id = dynamic_cast<const PEIdent*>(ex)) {
+	    const pform_name_t&path = id->path().name;
+	    return path.size() == 1 && peek_tail_name(path) == want;
+      }
+
+      if (const PETypename*tn = dynamic_cast<const PETypename*>(ex)) {
+	    data_type_t*dt = tn->get_type();
+	    if (type_parameter_t*tp = dynamic_cast<type_parameter_t*>(dt))
+		  return tp->name == want;
+	    if (typeref_t*tr = dynamic_cast<typeref_t*>(dt)) {
+		  typedef_t*td = tr->get_typedef();
+		  return td && td->name == want;
+	    }
+	    if (class_type_t*ct = dynamic_cast<class_type_t*>(dt))
+		  return ct->name == want;
+      }
+
+      return false;
+}
+
+static bool overrides_are_own_params_(PClass*pclass, const parmvalue_t*ov)
+{
+      if (ov == 0 || ov->by_name)
+	    return false;
+      if (ov->by_order == 0 || ov->by_order->empty())
+	    return false;
+
+      vector<perm_string> order = class_param_names_in_order_(pclass->parameters);
+      if (ov->by_order->size() > order.size())
+	    return false;
+
+      size_t idx = 0;
+      for (list<PExpr*>::const_iterator it = ov->by_order->begin()
+		 ; it != ov->by_order->end() ; ++ it, ++ idx) {
+	    if (! override_names_own_param_(*it, order[idx]))
+		  return false;
+      }
+      return true;
+}
+
+/*
+ * If elaborating typedef R#(T) this_type inside a specialization of R,
+ * return that specialization instead of nesting another specialize.
+ */
+static netclass_t* self_specialization_if_any_(NetScope*use_scope,
+					       PClass*pclass,
+					       const parmvalue_t*ov)
+{
+      if (! overrides_are_own_params_(pclass, ov))
+	    return 0;
+
+      NetScope*cs = use_scope;
+      while (cs && cs->type() != NetScope::CLASS)
+	    cs = cs->parent();
+      if (cs == 0)
+	    return 0;
+
+      const netclass_t*cur = cs->class_def();
+      if (cur == 0 || cur->get_pclass() != pclass)
+	    return 0;
+
+      return const_cast<netclass_t*>(cur);
+}
+
 static void apply_class_param_overrides_(Design*des, NetScope*class_scope,
 					 NetScope*val_scope, PClass*pclass,
 					 const parmvalue_t*ov, const LineInfo&li)
@@ -186,6 +259,9 @@ static ivl_type_t specialize_class_type_(Design*des, NetScope*use_scope,
       PClass*pclass = generic->get_pclass();
       if (pclass == 0)
 	    return generic;
+
+      if (netclass_t*self = self_specialization_if_any_(use_scope, pclass, ov))
+	    return self;
 
       string key = specialization_key_(generic->get_name(), ov);
       static map<string,netclass_t*> cache;

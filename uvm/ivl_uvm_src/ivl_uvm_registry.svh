@@ -1,8 +1,7 @@
 // Accellera-shaped uvm_object_registry#(T, Tname) for IVL_UVM.
 //
-// get() uses `m_inst = new` where m_inst is typed as the base wrapper;
-// PENewClass elaborates bare `new` inside a method as the enclosing class
-// when that class is compatible with the LHS type.
+// Nested `this_type` is the enclosing specialization (R#(T,Tname) self-ref),
+// so get() returns a typed registry handle without $cast.
 `ifndef IVL_UVM_REGISTRY_SVH
 `define IVL_UVM_REGISTRY_SVH
 
@@ -24,7 +23,8 @@ class uvm_object_registry #(type T = ivl_uvm_registry_dummy,
                             parameter string Tname = "<unknown>")
   extends uvm_object_wrapper;
 
-  static uvm_object_wrapper m_inst;
+  typedef uvm_object_registry#(T, Tname) this_type;
+  static this_type m_inst;
 
   function new();
     uvm_factory f;
@@ -34,8 +34,7 @@ class uvm_object_registry #(type T = ivl_uvm_registry_dummy,
   endfunction
 
   // Accellera-shaped singleton. Call as TYPE::type_id::get().
-  // Returns the base wrapper; $cast to TYPE::type_id for typed create.
-  static function uvm_object_wrapper get();
+  static function this_type get();
     if (m_inst == null)
       m_inst = new;
     return m_inst;
@@ -51,7 +50,7 @@ class uvm_object_registry #(type T = ivl_uvm_registry_dummy,
   // Goes through get()+create_object so type overrides still apply.
   static function T create(string name = "");
     T obj;
-    uvm_object_wrapper w;
+    this_type w;
     uvm_object tmp;
     bit ok;
     w = get();
